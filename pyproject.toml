@@ -3,8 +3,12 @@ name = "llm-as-a-merge"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
+    "fastembed>=0.8.0",
+    "openai>=1.61.0",
     "ollama>=0.6.2",
+    "pypdf>=6.11.0",
     "python-dotenv>=1.2.2",
+    "qdrant-client>=1.18.0",
     "tavily-python>=0.7.24",
     "termcolor>=3.3.0",
 ]

@@ -1,114 +1,103 @@
-from openai import OpenAI
-import requests
-from tavily import TavilyClient
-from dotenv import load_dotenv
+from __future__ import annotations
+
+
 import os
-from termcolor import colored
-from typing import Any
+from pathlib import Path
+import openai
+import yaml
+from dotenv import load_dotenv
+from qdrant import get_qdrant_client, index_pdfs_into_qdrant, build_rag_context
+from tavily import format_evidence_for_llm, normalize_tavily_results, tavily_web_search
 
-
-# Load environment variables from .env file
 load_dotenv()
-TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
-# Create an OpenAI client configured for the Ollama local server
-client = OpenAI(
-    base_url='http://localhost:11434/v1/',
-    api_key='ollama',  # Required but ignored by Ollama
-)
+# Load config from YAML
+with open("config.yaml", "r") as f:
+    config = yaml.safe_load(f)
 
-# Initialize the Tavily client with the API key from the environment
-tavily_client = TavilyClient(api_key=TAVILY_API_KEY)
+qdrant_cfg = config["qdrant"]
+gen_cfg = config["generation"]
+
+PDF_DATA_DIR = Path(qdrant_cfg["pdf_data_dir"])
+QDRANT_LOCAL_PATH = Path(qdrant_cfg["local_path"])
+TOP_K = int(qdrant_cfg["top_k"])
+WEB_TOP_K = int(gen_cfg["web_top_k"])
+MAX_OUTPUT_TOKENS = int(gen_cfg["max_output_tokens"])
+MAX_WEB_CONTEXT_CHARS = int(gen_cfg["max_web_context_chars"])
+MAX_RAG_CONTEXT_CHARS = int(gen_cfg["max_rag_context_chars"])
+OPENAI_MODEL = gen_cfg.get("openai_model", "gpt-3.5-turbo")
 
 
-def ollama_infer(prompt: str, model: str = "llama3.2") -> str:
-    """Run a single inference call using the Ollama local server."""
-    try:
+def openai_infer(prompt: str, model: str, api_key: str, max_tokens: int, stream: bool = False) -> str:
+    client = openai.OpenAI(api_key=api_key)
+    if stream:
         response = client.chat.completions.create(
-            messages=[
-                {
-                    'role': 'user',
-                    'content': prompt,
-                }
-            ],
             model=model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=max_tokens,
+            stream=True,
         )
-        return response.choices[0].message.content
-    except Exception as e:
-        raise RuntimeError(f"Ollama API error: {e}")
-
-
-def tavily_web_search(query: str) -> str:
-    """Fetch context from a web search to provide additional information for the Ollama model."""
-    try:
-        response = tavily_client.search(query)
-        print(colored("Tavily Web Search Response:\n" + str(response), color="green"))
-      
-        # Assuming the response contains a 'results' field with snippets
-        return response
-    except Exception as e:
-        raise RuntimeError(f"Error fetching context from Tavily: {e}")
-
-
-def process_tavily_results(tavily_response: dict[str, Any]) -> list[dict[str, Any]]:
-    """Convert Tavily response into clean web evidence objects."""
-    evidence = []
-
-    for i, item in enumerate(tavily_response.get("results", []), start=1):
-        content = item.get("content", "").strip()
-
-        if not content:
-            continue
-
-        evidence.append(
-            {
-                "source_id": f"web_{i}",
-                "source_type": "web",
-                "title": item.get("title", "").strip(),
-                "url": item.get("url", "").strip(),
-                "content": content,
-                "score": item.get("score", None),
-            }
+        full = ""
+        for chunk in response:
+            delta = chunk.choices[0].delta.content if chunk.choices[0].delta else None
+            if delta:
+                print(delta, end="", flush=True)
+                full += delta
+        print()  # Newline after streaming
+        return full
+    else:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=max_tokens,
         )
-
-    return evidence
-
-
-def format_tavily_response(evidence: list[dict]) -> str:
-    blocks = []
-
-    for item in evidence:
-        block = f"""
-[{item["source_id"]}]
-Source type: {item["source_type"]}
-Title: {item["title"]}
-URL: {item["url"]}
-Search score: {item["score"]}
-Content:
-{item["content"]}
-""".strip()
-
-        blocks.append(block)
-
-    return "\n\n---\n\n".join(blocks)
+        return response.choices[0].message.content or ""
 
 
 if __name__ == "__main__":
-    model_name = "llama3.2"  # Ollama model name
-    user_prompt = "Explain what inference means in one short paragraph."
+    user_prompt = "Explain retrieval-augmented generation and how Qdrant is used in this project."
+
+    client = None
 
     try:
-        # Fetch additional context from the web
-        response = tavily_web_search(user_prompt)
-        processed_response = process_tavily_results(response)
-        web_context = format_tavily_response(processed_response)
+        print("Running Tavily web search...")
+        web_response = tavily_web_search(user_prompt, max_results=WEB_TOP_K)
+        web_evidence = normalize_tavily_results(web_response)
+        web_context = format_evidence_for_llm(web_evidence)
+        print(f"Collected web evidence items: {len(web_evidence)}")
 
-        # Combine the context with the user prompt
-        combined_prompt = f"{web_context}\n\n{user_prompt}"
+        print(f"Indexing PDFs from: {PDF_DATA_DIR}")
+        print(f"Persisting Qdrant DB in: {QDRANT_LOCAL_PATH}")
+        client = get_qdrant_client()
+        indexed = index_pdfs_into_qdrant(client, PDF_DATA_DIR)
+        print(f"Indexed/updated chunks: {indexed}")
 
-        # Run inference with the combined prompt
-        output = ollama_infer(combined_prompt, model=model_name)
-        print("\nModel response:\n")
-        print(output)
-    except RuntimeError as err:
+        print("Retrieving context from Qdrant...")
+        rag_context = build_rag_context(client, user_prompt, top_k=TOP_K)
+        if not rag_context:
+            raise RuntimeError("No RAG context found. Ensure PDFs exist in data/ and contain extractable text.")
+
+        combined_prompt = (
+            "Answer using both contexts below: Web context from Tavily and PDF RAG context from Qdrant. "
+            "If they disagree, explain the difference briefly. Keep the answer under 120 words.\n\n"
+            f"Web context (Tavily):\n{web_context}\n\n"
+            f"RAG context (Qdrant):\n{rag_context}\n\n"
+            f"Question:\n{user_prompt}"
+        )
+
+        print("Generating final answer with OpenAI API...")
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        print("Model response (streaming):\n")
+        output = openai_infer(
+            combined_prompt,
+            model=OPENAI_MODEL,
+            api_key=openai_api_key,
+            max_tokens=MAX_OUTPUT_TOKENS,
+            stream=True,
+        )
+        print("\nGeneration done")
+    except Exception as err:
         print(f"Error: {err}")
+    finally:
+        if client is not None:
+            client.close()
