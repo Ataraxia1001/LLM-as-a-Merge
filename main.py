@@ -2,30 +2,24 @@ from __future__ import annotations
 
 
 import os
-from pathlib import Path
-import openai
-import yaml
 from dotenv import load_dotenv
+import openai
+from config.config import load_config
 from qdrant import get_qdrant_client, index_pdfs_into_qdrant, build_rag_context
 from tavily import format_evidence_for_llm, normalize_tavily_results, tavily_web_search
 
 load_dotenv()
 
-# Load config from YAML
-with open("config.yaml", "r") as f:
-    config = yaml.safe_load(f)
-
-qdrant_cfg = config["qdrant"]
-gen_cfg = config["generation"]
-
-PDF_DATA_DIR = Path(qdrant_cfg["pdf_data_dir"])
-QDRANT_LOCAL_PATH = Path(qdrant_cfg["local_path"])
-TOP_K = int(qdrant_cfg["top_k"])
-WEB_TOP_K = int(gen_cfg["web_top_k"])
-MAX_OUTPUT_TOKENS = int(gen_cfg["max_output_tokens"])
-MAX_WEB_CONTEXT_CHARS = int(gen_cfg["max_web_context_chars"])
-MAX_RAG_CONTEXT_CHARS = int(gen_cfg["max_rag_context_chars"])
-OPENAI_MODEL = gen_cfg.get("openai_model", "gpt-3.5-turbo")
+# Load and validate config
+config = load_config()
+PDF_DATA_DIR = config.qdrant.pdf_data_dir
+QDRANT_LOCAL_PATH = config.qdrant.local_path
+TOP_K = config.qdrant.top_k
+WEB_TOP_K = config.generation.web_top_k
+MAX_OUTPUT_TOKENS = config.generation.max_output_tokens
+MAX_WEB_CONTEXT_CHARS = config.generation.max_web_context_chars
+MAX_RAG_CONTEXT_CHARS = config.generation.max_rag_context_chars
+OPENAI_MODEL = config.generation.openai_model
 
 
 def openai_infer(prompt: str, model: str, api_key: str, max_tokens: int, stream: bool = False) -> str:

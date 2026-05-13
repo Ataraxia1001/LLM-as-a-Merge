@@ -1,0 +1,17 @@
+# config.toml for LLM-as-a-Merge
+
+[qdrant]
+collection = "pdf_chunks"
+local_path = "data/vectordb"
+embedding_model = "BAAI/bge-small-en-v1.5"
+chunk_size = 1200
+chunk_overlap = 200
+top_k = 5
+pdf_data_dir = "data"
+
+[generation]
+max_output_tokens = 220
+web_top_k = 5
+max_web_context_chars = 7000
+max_rag_context_chars = 9000
+openai_model = "gpt-3.5-turbo"

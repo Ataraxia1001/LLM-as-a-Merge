@@ -2,5 +2,7 @@
 __pycache__/
 *.pyc
 
+.qdrant
+.vscode
 .env
 data/vectordb

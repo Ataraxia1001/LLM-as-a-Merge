@@ -1,27 +1,26 @@
 
 # Qdrant RAG utility imports and config
 
+
 import hashlib
-import yaml
 from pathlib import Path
 from typing import Iterable
 from fastembed import TextEmbedding
 from pypdf import PdfReader
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
+from config.config import load_config
 
-# Load config from YAML
-with open("config.yaml", "r") as f:
-    config = yaml.safe_load(f)
-
-qdrant_cfg = config["qdrant"]
-QDRANT_COLLECTION = qdrant_cfg["collection"]
-PDF_DATA_DIR = Path(qdrant_cfg["pdf_data_dir"])
-QDRANT_LOCAL_PATH = Path(qdrant_cfg["local_path"])
-EMBEDDING_MODEL = qdrant_cfg["embedding_model"]
-CHUNK_SIZE = int(qdrant_cfg["chunk_size"])
-CHUNK_OVERLAP = int(qdrant_cfg["chunk_overlap"])
-TOP_K = int(qdrant_cfg["top_k"])
+# Load config from TOML using Pydantic
+config = load_config()
+qdrant_cfg = config.qdrant
+QDRANT_COLLECTION = qdrant_cfg.collection
+PDF_DATA_DIR = qdrant_cfg.pdf_data_dir
+QDRANT_LOCAL_PATH = qdrant_cfg.local_path
+EMBEDDING_MODEL = qdrant_cfg.embedding_model
+CHUNK_SIZE = qdrant_cfg.chunk_size
+CHUNK_OVERLAP = qdrant_cfg.chunk_overlap
+TOP_K = qdrant_cfg.top_k
 
 embedder = TextEmbedding(model_name=EMBEDDING_MODEL)
 
