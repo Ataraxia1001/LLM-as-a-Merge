@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-
 import os
 from dotenv import load_dotenv
 import openai
 from config.config import load_config
-from qdrant import get_qdrant_client, index_pdfs_into_qdrant, build_rag_context
-from tavily import format_evidence_for_llm, normalize_tavily_results, tavily_web_search
+from qdrant import QdrantRAG
+from tavily import TavilyWebSearch
 
 load_dotenv()
 
@@ -55,21 +54,11 @@ if __name__ == "__main__":
 
     try:
         print("Running Tavily web search...")
-        web_response = tavily_web_search(user_prompt, max_results=WEB_TOP_K)
-        web_evidence = normalize_tavily_results(web_response)
-        web_context = format_evidence_for_llm(web_evidence)
-        print(f"Collected web evidence items: {len(web_evidence)}")
+        web_context = TavilyWebSearch()(user_prompt, max_results=WEB_TOP_K)
+        print("Collected web evidence.")
 
-        print(f"Indexing PDFs from: {PDF_DATA_DIR}")
         print(f"Persisting Qdrant DB in: {QDRANT_LOCAL_PATH}")
-        client = get_qdrant_client()
-        indexed = index_pdfs_into_qdrant(client, PDF_DATA_DIR)
-        print(f"Indexed/updated chunks: {indexed}")
-
-        print("Retrieving context from Qdrant...")
-        rag_context = build_rag_context(client, user_prompt, top_k=TOP_K)
-        if not rag_context:
-            raise RuntimeError("No RAG context found. Ensure PDFs exist in data/ and contain extractable text.")
+        rag_context = QdrantRAG()(user_prompt, PDF_DATA_DIR)
 
         combined_prompt = (
             "Answer using both contexts below: Web context from Tavily and PDF RAG context from Qdrant. "
